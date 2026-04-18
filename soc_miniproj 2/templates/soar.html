@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="glass-card large soar-card">
+    <div class="soar-header">
+        <div>
+            <h2 style="margin-bottom: 0.4rem;">SOAR Response Console</h2>
+            <p class="soar-subtitle">Frontend playbook for critical withdrawal alerts</p>
+        </div>
+        <span class="soar-badge">ENGINE ONLINE</span>
+    </div>
+
+    <div class="soar-alert">
+        <span class="dot-pulse"></span>
+        Monitoring SIEM webhooks for critical events...
+    </div>
+
+    <div class="soar-actions" id="runBlock">
+        <button id="runPlaybookBtn" class="btn btn-danger" type="button">Run WITHDRAWAL_INITIATED Playbook</button>
+    </div>
+
+    <div id="timeline" class="soar-timeline"></div>
+
+    <div id="approvalPanel" class="approval-panel" style="display: none;">
+        <h3>Critical Business Action Required</h3>
+        <p>Target asset is Zone 4 Hot Wallet. Automated freezing is disabled by policy.</p>
+        <div class="approval-actions">
+            <button id="approveBtn" class="btn">Approve Freeze Wallet</button>
+            <button id="denyBtn" class="btn btn-warning">Deny Action</button>
+        </div>
+    </div>
+
+    <div id="finalState" class="soar-final-state" style="display: none;"></div>
+
+    <div id="exportWrap" class="soar-actions" style="display: none; margin-top: 1rem;">
+        <button id="exportReportBtn" class="btn" type="button">Export Incident Report (PDF)</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const runPlaybookBtn = document.getElementById('runPlaybookBtn');
+const timeline = document.getElementById('timeline');
+const approvalPanel = document.getElementById('approvalPanel');
+const finalState = document.getElementById('finalState');
+const approveBtn = document.getElementById('approveBtn');
+const denyBtn = document.getElementById('denyBtn');
+const exportWrap = document.getElementById('exportWrap');
+const exportReportBtn = document.getElementById('exportReportBtn');
+
+function appendTimelineEntry(step, title, text, tone) {
+    const item = document.createElement('div');
+    item.className = `timeline-item tone-${tone}`;
+    item.innerHTML = `
+        <div class="timeline-step">STEP ${step}</div>
+        <div>
+            <div class="timeline-title">${title}</div>
+            <p>${text}</p>
+        </div>
+    `;
+    timeline.appendChild(item);
+    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function setFinalState(text, isSuccess) {
+    finalState.style.display = 'block';
+    finalState.className = isSuccess ? 'soar-final-state success' : 'soar-final-state warning';
+    finalState.textContent = text;
+    exportWrap.style.display = 'block';
+}
+
+function resetUi() {
+    timeline.innerHTML = '';
+    approvalPanel.style.display = 'none';
+    finalState.style.display = 'none';
+    finalState.textContent = '';
+    exportWrap.style.display = 'none';
+    runPlaybookBtn.disabled = true;
+    runPlaybookBtn.textContent = 'Playbook Running...';
+}
+
+function completeRun() {
+    runPlaybookBtn.disabled = false;
+    runPlaybookBtn.textContent = 'Run WITHDRAWAL_INITIATED Playbook';
+}
+
+async function runPlaybook() {
+    resetUi();
+
+    const response = await fetch("{{ url_for('run_soar_playbook') }}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    });
+
+    if (!response.ok) {
+        appendTimelineEntry('ERROR', 'Execution Failed', 'Failed to start playbook.', 'critical');
+        completeRun();
+        return;
+    }
+
+    const data = await response.json();
+
+    appendTimelineEntry(
+        'ALERT',
+        'Critical Alert Received',
+        `event_type: '${data.alert.event_type}' | target: ${data.alert.target}`,
+        'critical'
+    );
+
+    let delay = 600;
+    data.steps.forEach((step, index) => {
+        setTimeout(() => {
+            appendTimelineEntry(step.id, step.name, step.message, step.tone);
+            if (index === data.steps.length - 1) {
+                approvalPanel.style.display = 'block';
+                completeRun();
+            }
+        }, delay);
+        delay += 850;
+    });
+}
+
+async function submitDecision(approved) {
+    approveBtn.disabled = true;
+    denyBtn.disabled = true;
+
+    const response = await fetch("{{ url_for('soar_decision') }}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved })
+    });
+
+    if (!response.ok) {
+        appendTimelineEntry('ERROR', 'Decision Failed', 'Could not complete action.', 'critical');
+        approveBtn.disabled = false;
+        denyBtn.disabled = false;
+        return;
+    }
+
+    const data = await response.json();
+    appendTimelineEntry(data.step.id, data.step.name, data.step.message, data.step.tone);
+    setFinalState(data.final_message, data.status === 'resolved');
+    approvalPanel.style.display = 'none';
+    approveBtn.disabled = false;
+    denyBtn.disabled = false;
+}
+
+runPlaybookBtn.addEventListener('click', runPlaybook);
+approveBtn.addEventListener('click', () => submitDecision(true));
+denyBtn.addEventListener('click', () => submitDecision(false));
+
+async function exportReport() {
+    exportReportBtn.disabled = true;
+    exportReportBtn.textContent = 'Generating PDF...';
+
+    try {
+        const response = await fetch("{{ url_for('export_soar_report') }}", {
+            method: 'GET'
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            appendTimelineEntry('ERROR', 'Export Failed', data.error || 'Could not generate report PDF.', 'critical');
+            return;
+        }
+
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const fileNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+        a.href = url;
+        a.download = fileNameMatch ? fileNameMatch[1] : 'soar_incident_report.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } finally {
+        exportReportBtn.disabled = false;
+        exportReportBtn.textContent = 'Export Incident Report (PDF)';
+    }
+}
+
+exportReportBtn.addEventListener('click', exportReport);
+</script>
+{% endblock %}
