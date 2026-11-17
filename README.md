@@ -5,7 +5,8 @@ The app writes a structured security log for everything a user does, ships those
 (**Wazuh** and **Graylog**), custom **Wazuh detection rules** raise alerts mapped to **MITRE ATT&CK**,
 and a **SOAR console** walks an analyst through containing the incident.
 
-Built as the final project for my SOC course (3rd year, B.Tech CSE, PES University).
+Final project for the Security Operations Center course (3rd year, B.Tech CSE, PES University),
+built by **Kaveri Sharma** and **Anvita Kulkarni**.
 
 ```mermaid
 flowchart LR
