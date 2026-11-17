@@ -3,10 +3,10 @@
 # Graylog UI: http://127.0.0.1:9000  (admin / admin)
 # GELF UDP input on port 12201 (already created automatically)
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."   # repo root
 
 echo "Starting Graylog stack (if not already running)..."
-docker compose -f docker-compose-graylog.yml up -d
+docker compose -f siem/graylog/docker-compose.yml up -d
 
 echo "Waiting for Graylog to be ready..."
 for i in $(seq 1 20); do
@@ -32,4 +32,4 @@ GRAYLOG_PROTOCOL=gelf-udp \
 WAZUH_HOST=127.0.0.1 \
 WAZUH_PORT=514 \
 CRYPTOVAULT_PORT=5001 \
-python3 cryptovault_app.py
+python3 app/cryptovault_app.py

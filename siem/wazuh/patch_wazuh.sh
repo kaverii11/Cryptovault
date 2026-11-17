@@ -1,4 +1,5 @@
 #!/bin/bash
+cd "$(dirname "$0")"   # so wazuh_custom_rules.xml is found
 # Apply custom rules
 docker cp wazuh_custom_rules.xml single-node-wazuh.manager-1:/var/ossec/etc/rules/local_rules.xml
 docker exec -u 0 single-node-wazuh.manager-1 chown wazuh:wazuh /var/ossec/etc/rules/local_rules.xml

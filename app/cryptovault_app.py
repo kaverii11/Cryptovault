@@ -7,11 +7,13 @@ from io import BytesIO
 from flask import Flask, request, render_template, render_template_string, redirect, url_for, session, jsonify, send_file
 from datetime import datetime
 
-import attack_simulator
-import attack_1_initial_access
-import attack_2_lateral_movement
-import attack_3_exfiltration
-import attack_4_ransomware
+from attacks import (
+    attack_simulator,
+    attack_1_initial_access,
+    attack_2_lateral_movement,
+    attack_3_exfiltration,
+    attack_4_ransomware,
+)
 
 app = Flask(__name__)
 # Required for session management
@@ -426,29 +428,46 @@ def withdraw():
     
     return redirect(url_for('dashboard', message=f"Transfer processing: {amount} BTC to {address}"))
 
+# --- Phase 2: one scenario per custom Wazuh rule (siem/wazuh/wazuh_custom_rules.xml) ---
+
 @app.route('/simulate_impossible_travel', methods=['POST'])
 def simulate_impossible_travel():
-    # Stage 1: Initial Access
-    attack_1_initial_access.run_simulation()
+    # Rule 100101 (T1078): two logins for the same admin, one from a far-away IP
+    generate_log("SUCCESSFUL_LOGIN", "INFO", "admin_user", "127.0.0.1",
+                 "Login successful.", log_source="Active Directory")
+    generate_log("SUCCESSFUL_LOGIN", "INFO", "admin_user", "185.20.12.99",
+                 "Login from distinct geolocation within 1 hour.", log_source="Active Directory")
     return redirect(url_for('simulator'))
 
 @app.route('/simulate_beaconing', methods=['POST'])
 def simulate_beaconing():
-    # Stage 3: Data Exfiltration
-    attack_3_exfiltration.run_simulation()
+    # Rules 100102 + 100105 (T1071.004): 12 DNS queries from one host inside 60 s
+    for i in range(1, 13):
+        generate_log("DNS_QUERY", "WARNING", "system", "10.0.4.15",
+                     f"DNS query to non-whitelisted IP 198.51.100.22 (Query {i})",
+                     log_source="Palo Alto Firewall")
     return redirect(url_for('simulator'))
 
 @app.route('/simulate_clipboard', methods=['POST'])
 def simulate_clipboard():
-    # Stage 2: Lateral Movement
-    attack_2_lateral_movement.run_simulation()
+    # Rule 100103 (T1115): EDR sees clipboard tampering followed by an outbound request
+    client_ip = request.remote_addr
+    generate_log("CLIPBOARD_MODIFIED", "CRITICAL", "employee_1", client_ip,
+                 "Unsigned process svchost.exe modified system clipboard.", log_source="CrowdStrike EDR")
+    generate_log("OUTBOUND_REQUEST", "CRITICAL", "employee_1", client_ip,
+                 "svchost.exe initiated web request immediately after clipboard interaction.",
+                 log_source="CrowdStrike EDR")
     return redirect(url_for('simulator'))
+
+# --- Phase 4: full ransomware kill chain (app/attacks/) ---
 
 @app.route('/simulate_ransomware', methods=['POST'])
 def simulate_ransomware():
-    # Stage 4: Ransomware
-    attack_4_ransomware.run_simulation()
-    return jsonify({"status": "success", "message": "Stage 4 Ransomware Simulation completed."})
+    attack_1_initial_access.run_simulation()    # T1059 execution
+    attack_2_lateral_movement.run_simulation()  # T1021 lateral movement
+    attack_3_exfiltration.run_simulation()      # T1048 exfiltration
+    attack_4_ransomware.run_simulation()        # T1486 impact
+    return jsonify({"status": "success", "message": "Ransomware kill chain (stages 1-4) completed."})
 
 @app.errorhandler(404)
 def page_not_found(e):
